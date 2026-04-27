@@ -20,7 +20,7 @@ export default function Nav() {
   return (
     <nav className="nav">
       <div className="nav-left">
-        <span className="nav-title">MycelialCRM</span>
+        <span className="nav-title">JumpsuitCRM</span>
         <div className="nav-links">
           {links.map(l => (
             <Link

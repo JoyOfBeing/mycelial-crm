@@ -13,6 +13,7 @@ const SOURCE_TYPES = [
   { value: 'contractor', label: 'Contractor List' },
   { value: 'videoask', label: 'VideoAsk — Intros' },
   { value: 'wix', label: 'Wix CRM' },
+  { value: '_custom', label: 'Custom...' },
 ];
 
 const CRM_FIELDS = [
@@ -26,8 +27,11 @@ const CRM_FIELDS = [
   { value: 'website', label: 'Website' },
   { value: 'bio', label: 'Bio' },
   { value: 'roles', label: 'Roles (comma-separated)' },
+  { value: 'role_checkbox', label: 'Role (checkbox column — column name = role)' },
   { value: 'skills', label: 'Skills (comma-separated)' },
+  { value: 'skill_checkbox', label: 'Skill (checkbox column — column name = skill)' },
   { value: 'interests', label: 'Interests (comma-separated)' },
+  { value: 'interest_checkbox', label: 'Interest (checkbox column — column name = interest)' },
   { value: 'services_needed', label: 'Services Needed (comma-separated)' },
   { value: 'business_size', label: 'Business Size' },
   { value: 'client_notes', label: 'Client Notes' },
@@ -50,7 +54,7 @@ function getAutoMapping(headers, sourceType) {
       full_name: ['name', 'full name', 'full_name'],
       company: ['company', 'organization', 'company name'],
       phone: ['phone', 'phone number'],
-      website: ['website', 'portfolio', 'url', 'portfolio url'],
+      website: ['website', 'portfolio', 'url', 'portfolio url', 'please attach a link'],
       bio: ['bio', 'about', 'tell us about yourself', 'about yourself'],
       roles: ['role', 'roles', 'identity', 'what best describes you', 'i identify as'],
       skills: ['skills', 'skill', 'expertise', 'what do you do'],
@@ -102,9 +106,22 @@ function getAutoMapping(headers, sourceType) {
 
   const preset = presets[sourceType] || presets.mixed;
 
+  // Checkbox columns for Network source — column name IS the value
+  const ROLE_COLUMNS = ['freelancer', 'agency owner', 'small business owner', 'consultant', 'startup founder', 'solopreneur', 'investor'];
+  const SKILL_COLUMNS = ['sales', 'marketing', 'creative', 'strategy', 'design', 'dev', 'content', 'production', 'retreat planning', 'modality offerings'];
+  const INTEREST_COLUMNS = ['not sure, but i just really vibe with you guys', 'getting projects from jumpsuit', 'hiring jumpsuit', 'joining your referral program', 'accessing your freelance network', 'a strategic partnership that allows me to sell new services or take on larger scopes of work', 'investing in jumpsuit'];
+
   headers.forEach((header, i) => {
     const lower = lowerHeaders[i];
     let matched = false;
+
+    // Check checkbox columns first (for Network source)
+    if (sourceType === 'network') {
+      if (ROLE_COLUMNS.includes(lower)) { mapping[header] = 'role_checkbox'; return; }
+      if (SKILL_COLUMNS.includes(lower)) { mapping[header] = 'skill_checkbox'; return; }
+      if (INTEREST_COLUMNS.some(ic => lower.includes(ic) || ic.includes(lower))) { mapping[header] = 'interest_checkbox'; return; }
+    }
+
     for (const [field, patterns] of Object.entries(preset)) {
       if (patterns.some(p => lower.includes(p) || p.includes(lower))) {
         mapping[header] = field;
@@ -153,6 +170,15 @@ function buildContact(row, mapping, sourceType) {
     if (crmField === 'email') {
       email = val.toLowerCase();
       contact.email = email;
+    } else if (crmField === 'role_checkbox') {
+      if (!contact.roles) contact.roles = [];
+      contact.roles.push(csvCol);
+    } else if (crmField === 'skill_checkbox') {
+      if (!contact.skills) contact.skills = [];
+      contact.skills.push(csvCol);
+    } else if (crmField === 'interest_checkbox') {
+      if (!contact.interests) contact.interests = [];
+      contact.interests.push(csvCol);
     } else if (['roles', 'skills', 'interests', 'services_needed'].includes(crmField)) {
       contact[crmField] = parseListField(val);
     } else if (crmField === 'video_duration') {
@@ -194,6 +220,8 @@ export default function ImportPage() {
   const { user, loading: authLoading, authorized } = useAuth();
   const [step, setStep] = useState(1);
   const [sourceType, setSourceType] = useState('network');
+  const [customSource, setCustomSource] = useState('');
+  const effectiveSource = sourceType === '_custom' ? customSource.toLowerCase().replace(/\s+/g, '-') : sourceType;
   const [fileName, setFileName] = useState('');
   const [headers, setHeaders] = useState([]);
   const [rows, setRows] = useState([]);
@@ -215,7 +243,7 @@ export default function ImportPage() {
         const hdrs = results.meta.fields || [];
         setHeaders(hdrs);
         setRows(results.data);
-        setMapping(getAutoMapping(hdrs, sourceType));
+        setMapping(getAutoMapping(hdrs, effectiveSource));
         setStep(2);
       },
       error: (err) => {
@@ -227,7 +255,7 @@ export default function ImportPage() {
   async function handlePreview() {
     // Check which emails already exist
     const previewRows = rows.slice(0, 10);
-    const contacts = previewRows.map(r => buildContact(r, mapping, sourceType));
+    const contacts = previewRows.map(r => buildContact(r, mapping, effectiveSource));
 
     const emails = contacts.filter(Boolean).map(c => c.email);
     const { data: existing } = await supabase
@@ -254,7 +282,7 @@ export default function ImportPage() {
 
     for (let i = 0; i < rows.length; i += batchSize) {
       const batch = rows.slice(i, i + batchSize);
-      const contacts = batch.map(r => buildContact(r, mapping, sourceType)).filter(Boolean);
+      const contacts = batch.map(r => buildContact(r, mapping, effectiveSource)).filter(Boolean);
 
       for (const contact of contacts) {
         // Check if contact exists
@@ -309,7 +337,7 @@ export default function ImportPage() {
 
     // Log the import
     await supabase.from('crm_import_log').insert({
-      source_name: sourceType,
+      source_name: effectiveSource,
       file_name: fileName,
       rows_total: rows.length,
       rows_imported: imported,
@@ -324,6 +352,8 @@ export default function ImportPage() {
 
   function reset() {
     setStep(1);
+    setSourceType('network');
+    setCustomSource('');
     setFileName('');
     setHeaders([]);
     setRows([]);
@@ -374,12 +404,38 @@ export default function ImportPage() {
               ))}
             </select>
 
+            {sourceType === '_custom' && (
+              <input
+                className="search-input"
+                type="text"
+                placeholder="Enter source name (e.g. crowdcast-april)"
+                value={customSource}
+                onChange={e => setCustomSource(e.target.value)}
+                style={{ width: '100%', marginBottom: 20 }}
+              />
+            )}
+
             <label className="import-label">Upload CSV</label>
+            <div
+              className="drop-zone"
+              onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add('drag-over'); }}
+              onDragLeave={e => { e.currentTarget.classList.remove('drag-over'); }}
+              onDrop={e => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file) handleFileUpload({ target: { files: [file] } });
+              }}
+              onClick={() => fileRef.current?.click()}
+            >
+              <p>Drag and drop a CSV here, or click to browse</p>
+            </div>
             <input
               ref={fileRef}
               type="file"
               accept=".csv"
               className="import-file-input"
+              style={{ display: 'none' }}
               onChange={handleFileUpload}
             />
           </div>

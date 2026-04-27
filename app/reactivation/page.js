@@ -30,7 +30,7 @@ export default function ReactivationPage() {
       .limit(100);
 
     if (sourceFilter) {
-      query = query.contains('sources', [sourceFilter]);
+      query = query.filter('sources', 'cs', `["${sourceFilter}"]`);
     }
 
     const { data, error } = await query;
