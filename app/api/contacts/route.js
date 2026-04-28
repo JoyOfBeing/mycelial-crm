@@ -31,7 +31,7 @@ export async function GET(request) {
 
   let query = supabase
     .from('crm_contacts')
-    .select('id, full_name, first_name, last_name, email, company, phone, website, bio, roles, skills, interests, services_needed, business_size, client_notes, video_url, video_transcript, video_duration, calendly_completed, sources, tags, last_interaction_at, created_at, updated_at', { count: 'exact' });
+    .select('id, full_name, first_name, last_name, email, company, phone, website, bio, roles, skills, interests, services_needed, business_size, client_notes, video_url, video_transcript, video_duration, calendly_completed, hourly_rate, title, specialties, status, sources, tags, last_interaction_at, created_at, updated_at', { count: 'exact' });
 
   if (search) query = query.textSearch('search_vector', search, { type: 'websearch' });
   if (source) query = query.filter('sources', 'cs', `["${source}"]`);

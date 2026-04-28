@@ -178,19 +178,68 @@ export default function ContactsPage() {
     fetchCounts();
   }
 
-  async function handleBulkRemoveTag() {
-    if (!bulkTag.trim() || selected.size === 0) return;
-    setBulkWorking(true);
-    const tag = bulkTag.trim().toLowerCase();
+  async function handleMergeContacts() {
+    if (selected.size < 2) return;
+    const selectedList = contacts.filter(c => selected.has(c.id));
+    const primaryName = selectedList.map(c => c.full_name || c.email).join(', ');
+    if (!confirm(`Merge ${selected.size} contacts?\n\nThe first selected contact will be kept as primary. Data from the others will be merged in, then the duplicates deleted.\n\nContacts: ${primaryName}`)) return;
 
+    setBulkWorking(true);
+
+    // Fetch full records for all selected
+    const fullRecords = [];
     for (const id of selected) {
-      const contact = contacts.find(c => c.id === id);
-      if (!contact) continue;
-      const newTags = (contact.tags || []).filter(t => t !== tag);
-      await supabase.from('crm_contacts').update({ tags: newTags }).eq('id', id);
+      const { data } = await supabase.from('crm_contacts').select('*').eq('id', id).single();
+      if (data) fullRecords.push(data);
     }
 
-    setBulkTag('');
+    const primary = fullRecords[0];
+    const others = fullRecords.slice(1);
+
+    // Merge fields from others into primary
+    const textFields = ['full_name', 'first_name', 'last_name', 'company', 'phone', 'website', 'bio', 'business_size', 'client_notes', 'video_url', 'video_transcript', 'hourly_rate', 'title', 'status'];
+    const arrayFields = ['sources', 'tags', 'roles', 'skills', 'interests', 'services_needed', 'specialties'];
+
+    for (const other of others) {
+      // Text fields: fill in blanks, prefer longer values for name fields
+      for (const f of textFields) {
+        if (!primary[f] && other[f]) {
+          primary[f] = other[f];
+        } else if (other[f] && ['full_name', 'first_name', 'last_name'].includes(f) && (other[f].length > (primary[f] || '').length)) {
+          primary[f] = other[f];
+        }
+      }
+      // Array fields: merge unique values
+      for (const f of arrayFields) {
+        primary[f] = [...new Set([...(primary[f] || []), ...(other[f] || [])])];
+      }
+      // Numeric
+      if (!primary.video_duration && other.video_duration) primary.video_duration = other.video_duration;
+      if (!primary.calendly_completed && other.calendly_completed) primary.calendly_completed = other.calendly_completed;
+    }
+
+    // Update primary
+    const { id, created_at, updated_at, search_vector, email, ...updateFields } = primary;
+    await supabase.from('crm_contacts').update({ ...updateFields, updated_at: new Date().toISOString() }).eq('id', primary.id);
+
+    // Move notes from others to primary
+    for (const other of others) {
+      await supabase.from('crm_notes').update({ contact_id: primary.id }).eq('contact_id', other.id);
+    }
+
+    // Delete duplicates
+    for (const other of others) {
+      await supabase.from('crm_contacts').delete().eq('id', other.id);
+    }
+
+    // Add system note
+    const mergedEmails = others.map(o => o.email).join(', ');
+    await supabase.from('crm_notes').insert({
+      contact_id: primary.id,
+      content: `Merged with: ${mergedEmails}`,
+      note_type: 'system',
+    });
+
     setSelected(new Set());
     setBulkWorking(false);
     fetchContacts(true);
@@ -246,10 +295,61 @@ export default function ContactsPage() {
             <button className="bulk-btn bulk-btn-add" onClick={handleBulkAddTag} disabled={bulkWorking || !bulkTag.trim()}>
               {bulkWorking ? 'Working...' : '+ Add tag'}
             </button>
-            <button className="bulk-btn bulk-btn-remove" onClick={handleBulkRemoveTag} disabled={bulkWorking || !bulkTag.trim()}>
-              − Remove tag
-            </button>
+            {selected.size >= 2 && (
+              <button className="bulk-btn bulk-btn-add" onClick={handleMergeContacts} disabled={bulkWorking} style={{ background: 'var(--teal)' }}>
+                {bulkWorking ? 'Merging...' : `Merge ${selected.size} contacts`}
+              </button>
+            )}
             <button className="bulk-btn-clear" onClick={() => setSelected(new Set())}>Clear</button>
+            {(() => {
+              const selectedContacts = contacts.filter(c => selected.has(c.id));
+              const allTags = [...new Set(selectedContacts.flatMap(c => c.tags || []))].sort();
+              const allSources = [...new Set(selectedContacts.flatMap(c => c.sources || []))].sort();
+
+              async function bulkRemoveField(field, value) {
+                setBulkWorking(true);
+                for (const id of selected) {
+                  const contact = contacts.find(c => c.id === id);
+                  if (!contact) continue;
+                  const current = contact[field] || [];
+                  if (!current.includes(value)) continue;
+                  const updated = current.filter(v => v !== value);
+                  await supabase.from('crm_contacts').update({ [field]: updated }).eq('id', id);
+                }
+                setBulkTag('');
+                setSelected(new Set());
+                setBulkWorking(false);
+                fetchContacts(true);
+                fetchCounts();
+              }
+
+              if (allTags.length === 0 && allSources.length === 0) return null;
+              return (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, width: '100%', alignItems: 'center' }}>
+                  {allSources.map(src => (
+                    <span key={`src-${src}`} className={`badge badge-${src}`} style={{ cursor: 'default' }}>
+                      {src}
+                      <button
+                        className="tag-remove"
+                        disabled={bulkWorking}
+                        onClick={() => bulkRemoveField('sources', src)}
+                        style={{ marginLeft: 4 }}
+                      >×</button>
+                    </span>
+                  ))}
+                  {allTags.map(tag => (
+                    <span key={`tag-${tag}`} className="tag">
+                      {tag}
+                      <button
+                        className="tag-remove"
+                        disabled={bulkWorking}
+                        onClick={() => bulkRemoveField('tags', tag)}
+                      >×</button>
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
 

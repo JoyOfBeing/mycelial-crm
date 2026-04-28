@@ -45,6 +45,14 @@ function renderMessageContent(content) {
 }
 
 export default function ChatWidget() {
+  const [hidden, setHidden] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/chat')) {
+      setHidden(true);
+    }
+  }, []);
+
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -84,6 +92,8 @@ export default function ChatWidget() {
     }
     setLoading(false);
   }
+
+  if (hidden) return null;
 
   return (
     <>

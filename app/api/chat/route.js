@@ -8,29 +8,44 @@ const supabase = createClient(
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are the JumpsuitCRM assistant for Jumpsuit, a creative agency. You help Nicole explore and manage her contact database.
+const SYSTEM_PROMPT = `You are the JumpsuitCRM assistant for Jumpsuit, a creative agency. You help Nicole and her producers find the right people for projects.
 
 You have access to tools that query the CRM database. Use them to answer questions about contacts, find people by skills/interests/roles/location, create lists, and surface insights.
 
-RANKING PRIORITY — when presenting lists of people, always rank by trust/vetting level:
-1. Contractors (source: contractor) — already vetted and worked with Jumpsuit
-2. Network + has video (source: network AND has video_url) — showed up, made effort to introduce themselves
-3. Network only (source: network) — filled out the form, engaged
-4. Crowdcast / other event sources — attended a call
-5. Everyone else (Wix, mixed) — least context
+CRITICAL — CONTRACTOR-FIRST RULE:
+When someone asks "who can do X" or "find me a Y", you MUST ALWAYS search contractors first. Contractors are vetted, trusted people Jumpsuit has actually worked with. They are ALWAYS the first recommendation.
+
+Your search strategy for any "find me someone" query:
+1. FIRST: filter_contacts with source="contractor" — search title, specialties, bio for relevant terms
+2. ALSO: think about synonyms and related roles. "Facebook ads" = media buyer, paid social, performance marketing. "video editor" = editor, post-production. Always cast a wide net with related terms.
+3. SECOND: if not enough contractors found, then search network contacts
+4. NEVER recommend a network/wix/crowdcast contact before exhausting contractor matches
+
+RANKING — every list you present MUST be sorted by trust level:
+1. ACTIVE CONTRACTORS (source: contractor, status: active) — current SOW, ready to deploy immediately. ALWAYS list these first.
+2. INACTIVE CONTRACTORS (source: contractor, status: inactive) — vetted and worked with Jumpsuit but need a new SOW. Still highly trusted.
+3. DO NOT USE CONTRACTORS (source: contractor, status: "do not use") — NEVER recommend these. If asked about them specifically, mention they are flagged as do-not-use.
+4. Network + has video (source: network AND has video_url) — showed up, introduced themselves on video
+5. Network only (source: network) — filled out the form
+6. Crowdcast / other event sources — attended a call
+7. Everyone else (Wix, mixed) — least context
+
+CONTRACTOR FIELDS: Contractors may have: title (their role, e.g. "Media Buyer", "Art Director"), hourly_rate, specialties (what they do), status (active/inactive/do not use), bio (notes about them).
 
 SPECIAL SOURCES:
 - "investors" — people from investor waitlists, previous angels, and Wefunder crowdfunding. Filter with source: "investors". These are potential or past financial backers, NOT employees or contractors.
 
-Within each tier, prioritize people who have richer profiles (bio, skills listed, interests aligned with the query).
-
-When presenting contacts, format them clearly with name, email, company, and relevant details. Mention their tier (e.g. "contractor", "network + video", "network") so Nicole knows the trust level.
+When presenting contacts:
+- ALWAYS mention their trust tier prominently (e.g. "⭐ Active Contractor", "Inactive Contractor", "Network")
+- Include rate if available
+- Include title and specialties if available
+- If a contractor's specialties/bio don't explicitly mention the query term but their role clearly covers it (e.g. "Media Buyer" covers Facebook ads), explain the connection
 
 CSV OUTPUT — whenever Nicole asks for a list, CSV, download, export, or says words like "give me", "pull", "create a list", "who are my", ALWAYS include a CSV code block in your response. Format it as:
 \`\`\`csv
-Name,Email,Company,Tier,Details
+Name,Email,Tier,Status,Title,Rate,Details
 \`\`\`
-The UI automatically renders a Download button for any \`\`\`csv block. Always include headers. Include: name, email, company, trust tier, and relevant fields for the query. Give a brief summary above the CSV, but ALWAYS include the CSV block — don't just describe the results.
+The UI automatically renders a Download button for any \`\`\`csv block. Always include headers. Sort by trust tier (active contractors first, then inactive, then network). Give a brief summary above the CSV, but ALWAYS include the CSV block.
 
 Be concise and conversational. Nicole is the founder — speak to her like a trusted collaborator.`;
 
@@ -63,6 +78,10 @@ const tools = [
         company: { type: 'string', description: 'Filter by company name (partial match)' },
         bio_contains: { type: 'string', description: 'Search within bio text' },
         transcript_contains: { type: 'string', description: 'Search within video transcripts' },
+        title: { type: 'string', description: 'Filter by title/role (partial match)' },
+        hourly_rate: { type: 'string', description: 'Filter by hourly rate (partial match)' },
+        specialty: { type: 'string', description: 'Filter by specialty (partial match in specialties jsonb array)' },
+        status: { type: 'string', description: 'Filter by status (e.g. active, inactive, do not use)' },
         limit: { type: 'number', description: 'Max results to return (default 50)' },
       },
     },
@@ -88,7 +107,7 @@ const tools = [
   },
   {
     name: 'run_sql',
-    description: 'Run a read-only SQL query against the CRM database for complex queries that other tools cannot handle. Tables: crm_contacts (id, email, first_name, last_name, full_name, company, phone, website, bio, roles jsonb[], skills jsonb[], interests jsonb[], services_needed jsonb[], business_size, client_notes, video_url, video_transcript, video_duration, calendly_completed, sources jsonb[], tags jsonb[], last_interaction_at, created_at, updated_at), crm_notes (id, contact_id, content, note_type, created_at), crm_import_log (id, source_name, file_name, rows_total, rows_imported, rows_merged, rows_skipped, imported_at). Only SELECT queries allowed.',
+    description: 'Run a read-only SQL query against the CRM database for complex queries that other tools cannot handle. Tables: crm_contacts (id, email, first_name, last_name, full_name, company, phone, website, bio, roles jsonb[], skills jsonb[], interests jsonb[], services_needed jsonb[], business_size, client_notes, video_url, video_transcript, video_duration, calendly_completed, hourly_rate, title, specialties jsonb[], sources jsonb[], tags jsonb[], last_interaction_at, created_at, updated_at), crm_notes (id, contact_id, content, note_type, created_at), crm_import_log (id, source_name, file_name, rows_total, rows_imported, rows_merged, rows_skipped, imported_at). Only SELECT queries allowed.',
     input_schema: {
       type: 'object',
       properties: {
@@ -104,7 +123,7 @@ async function executeTool(name, input) {
     case 'search_contacts': {
       const { data, error } = await supabase
         .from('crm_contacts')
-        .select('full_name, email, company, roles, skills, interests, sources, tags, bio, video_url, last_interaction_at')
+        .select('full_name, email, company, roles, skills, interests, sources, tags, bio, video_url, last_interaction_at, title, hourly_rate, specialties, status')
         .textSearch('search_vector', input.query, { type: 'websearch' })
         .limit(50);
       if (error) return { error: error.message };
@@ -114,7 +133,7 @@ async function executeTool(name, input) {
     case 'filter_contacts': {
       let query = supabase
         .from('crm_contacts')
-        .select('full_name, email, company, phone, roles, skills, interests, sources, tags, bio, video_url, last_interaction_at');
+        .select('full_name, email, company, phone, roles, skills, interests, sources, tags, bio, video_url, last_interaction_at, title, hourly_rate, specialties, status');
 
       if (input.source) query = query.filter('sources', 'cs', `["${input.source}"]`);
       if (input.tag) query = query.filter('tags', 'cs', `["${input.tag}"]`);
@@ -126,6 +145,10 @@ async function executeTool(name, input) {
       if (input.company) query = query.ilike('company', `%${input.company}%`);
       if (input.bio_contains) query = query.ilike('bio', `%${input.bio_contains}%`);
       if (input.transcript_contains) query = query.ilike('video_transcript', `%${input.transcript_contains}%`);
+      if (input.title) query = query.ilike('title', `%${input.title}%`);
+      if (input.hourly_rate) query = query.ilike('hourly_rate', `%${input.hourly_rate}%`);
+      if (input.specialty) query = query.ilike('specialties::text', `%${input.specialty}%`);
+      if (input.status) query = query.ilike('status', `%${input.status}%`);
       if (input.stale_days) {
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - input.stale_days);

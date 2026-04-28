@@ -128,6 +128,18 @@ export default function ContactProfilePage() {
               )}
               <a href={`mailto:${contact.email}`}>Send email</a>
             </div>
+            {(contact.title || contact.hourly_rate || contact.status) && (
+              <div style={{ marginTop: 8, fontSize: '0.9rem', color: 'var(--text-light)' }}>
+                {contact.title && <span>{contact.title}</span>}
+                {contact.title && contact.hourly_rate && <span> · </span>}
+                {contact.hourly_rate && <span>{contact.hourly_rate}</span>}
+                {contact.status && (
+                  <span style={{ marginLeft: contact.title || contact.hourly_rate ? 12 : 0, padding: '2px 8px', borderRadius: 4, fontSize: '0.8rem', background: contact.status === 'active' ? 'var(--teal)' : contact.status === 'do not use' ? 'var(--rust)' : '#666', color: '#fff' }}>
+                    {contact.status}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -162,7 +174,7 @@ export default function ContactProfilePage() {
         </div>
 
         {/* Roles / Skills / Interests (Network data) */}
-        {((contact.roles?.length > 0) || (contact.skills?.length > 0) || (contact.interests?.length > 0)) && (
+        {((contact.roles?.length > 0) || (contact.skills?.length > 0) || (contact.interests?.length > 0) || (contact.specialties?.length > 0)) && (
           <div className="profile-section">
             <h3 className="profile-section-title">Profile</h3>
             {contact.roles?.length > 0 && (
@@ -182,10 +194,18 @@ export default function ContactProfilePage() {
               </div>
             )}
             {contact.interests?.length > 0 && (
-              <div>
+              <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: 4 }}>Interests</div>
                 <div className="profile-list">
                   {contact.interests.map(i => <span key={i} className="profile-list-item">{i}</span>)}
+                </div>
+              </div>
+            )}
+            {contact.specialties?.length > 0 && (
+              <div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: 4 }}>Specialties</div>
+                <div className="profile-list">
+                  {contact.specialties.map(s => <span key={s} className="profile-list-item">{s}</span>)}
                 </div>
               </div>
             )}

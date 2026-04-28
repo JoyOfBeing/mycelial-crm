@@ -39,6 +39,11 @@ const CRM_FIELDS = [
   { value: 'video_transcript', label: 'Video Transcript' },
   { value: 'video_duration', label: 'Video Duration' },
   { value: 'calendly_completed', label: 'Calendly Completed' },
+  { value: 'hourly_rate', label: 'Hourly Rate' },
+  { value: 'title', label: 'Title / Role' },
+  { value: 'specialties', label: 'Specialties (comma-separated)' },
+  { value: 'status', label: 'Status (e.g. Active, Inactive)' },
+  { value: 'portfolio', label: 'Portfolio / LinkedIn' },
 ];
 
 // Auto-map column names to CRM fields based on source type
@@ -80,10 +85,17 @@ function getAutoMapping(headers, sourceType) {
       phone: ['phone', 'phone number'],
     },
     contractor: {
-      email: ['email', 'email address'],
+      email: ['primary email', 'email address', 'email'],
+      full_name: ['name', 'full name'],
       first_name: ['first name', 'first_name', 'firstname'],
       last_name: ['last name', 'last_name', 'lastname'],
-      full_name: ['name', 'full name'],
+      hourly_rate: ['rate', 'hourly rate', 'hourly_rate', 'price'],
+      title: ['title and/or project name', 'primary role', 'title'],
+      specialties: ['expertise / superpowers', 'scope/list of deliverables', 'discipline', 'scope', 'deliverables', 'specialties', 'specialty'],
+      bio: ['notes & considerations', 'additional information', 'additional info'],
+      status: ['pipeline status'],
+      portfolio: ['porfolio / linkedin', 'portfolio / linkedin', 'portfolio', 'linkedin'],
+      phone: ['number', 'phone', 'phone number'],
     },
     videoask: {
       email: ['email', 'email address', 'respondent email'],
@@ -123,7 +135,7 @@ function getAutoMapping(headers, sourceType) {
     }
 
     for (const [field, patterns] of Object.entries(preset)) {
-      if (patterns.some(p => lower.includes(p) || p.includes(lower))) {
+      if (patterns.some(p => lower === p || lower.includes(p))) {
         mapping[header] = field;
         matched = true;
         break;
@@ -179,12 +191,16 @@ function buildContact(row, mapping, sourceType) {
     } else if (crmField === 'interest_checkbox') {
       if (!contact.interests) contact.interests = [];
       contact.interests.push(csvCol);
-    } else if (['roles', 'skills', 'interests', 'services_needed'].includes(crmField)) {
+    } else if (['roles', 'skills', 'interests', 'services_needed', 'specialties'].includes(crmField)) {
       contact[crmField] = parseListField(val);
     } else if (crmField === 'video_duration') {
       contact[crmField] = parseFloat(val) || null;
     } else if (crmField === 'calendly_completed') {
       contact[crmField] = parseBool(val);
+    } else if (crmField === 'portfolio') {
+      if (!contact.website) contact.website = val;
+    } else if (crmField === 'status') {
+      contact.status = val.toLowerCase().trim();
     } else {
       contact[crmField] = val;
     }
@@ -211,6 +227,12 @@ function buildContact(row, mapping, sourceType) {
   // Add calendly tag for videoask
   if (sourceType === 'videoask' && contact.calendly_completed) {
     contact.tags.push('onboarded');
+  }
+
+  // Add status as tag
+  if (contact.status) {
+    const statusTag = contact.status.replace(/\s+/g, '-');
+    if (!contact.tags.includes(statusTag)) contact.tags.push(statusTag);
   }
 
   return contact;
